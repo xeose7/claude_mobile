@@ -52,6 +52,8 @@ const unsigned long UPDATE_INTERVAL = 1000;
 // Nextion HMI 통신 (Serial1)
 // ═══════════════════════════════════════════════════════════════════════════
 
+void resetDisplayCache();   // 아래에 정의 (checkSerial에서 먼저 호출)
+
 void sendCmd(const String& cmd) {
   Serial1.print(cmd);
   Serial1.write(0xFF);
@@ -72,6 +74,7 @@ void checkSerial() {
         isThermalPage   = false;
         ntcNeedsRefresh = true;
         prevStatus      = -1;
+        resetDisplayCache();   // 페이지 리셋되었으므로 전체 강제 재전송
       }
     }
     if (data == 0x01) {
@@ -88,7 +91,11 @@ void checkSerial() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 float readTemperature(int pin) {
-  int adcValue = analogRead(pin);
+  // ADC 노이즈로 소수점 끝자리가 흔들리면 표시가 깜빡이므로
+  // 16회 평균으로 안정화한다.
+  long sum = 0;
+  for (int i = 0; i < 16; i++) sum += analogRead(pin);
+  int adcValue = sum / 16;
   if (adcValue <= 0)    adcValue = 1;
   if (adcValue >= 4095) adcValue = 4094;
 
@@ -110,27 +117,55 @@ int getStatusColor(float temp) {
   return 63488;                     // 빨강 (RGB565 #F800)
 }
 
-// 메인(NTC) 페이지 전체 갱신
+// ─── 깜빡임 방지 캐시 ───────────────────────────────────────────────────────
+// 직전 전송값을 기억해두고, 값이 바뀔 때만 Nextion에 재전송한다.
+// (매초 동일 값을 다시 쓰면 텍스트 박스가 지워졌다 그려지며 깜빡임 발생)
+String cTxt[13];   // t0~t12 직전 텍스트
+int    cPco[13];   // t0~t12 직전 글자색
+int    cNum[4];    // n0~n3 직전 값
+
+void resetDisplayCache() {
+  for (int i = 0; i < 13; i++) { cTxt[i] = "\x01"; cPco[i] = -1; }
+  for (int i = 0; i < 4;  i++)   cNum[i] = -1;
+}
+
+// 텍스트가 직전과 다를 때만 전송
+void setTxt(int id, const String& val) {
+  if (cTxt[id] == val) return;
+  cTxt[id] = val;
+  sendCmd("t" + String(id) + ".txt=\"" + val + "\"");
+}
+
+// 글자색이 직전과 다를 때만 전송
+void setPco(int id, int color) {
+  if (cPco[id] == color) return;
+  cPco[id] = color;
+  sendCmd("t" + String(id) + ".pco=" + String(color));
+}
+
+// 숫자값이 직전과 다를 때만 전송
+void setNum(int id, int val) {
+  if (cNum[id] == val) return;
+  cNum[id] = val;
+  sendCmd("n" + String(id) + ".val=" + String(val));
+}
+
+// 메인(NTC) 페이지 전체 갱신 (변경분만 전송 → 깜빡임 없음)
 void updateNtcDisplay(float t1, float t2, float t3) {
-  // 온도값
-  sendCmd("t1.txt=\"" + String(t1, 1) + " C\"");
-  sendCmd("t2.txt=\"" + String(t2, 1) + " C\"");
-  sendCmd("t3.txt=\"" + String(t3, 1) + " C\"");
+  // 온도값 + 색상
+  setTxt(1, String(t1, 1) + " C"); setPco(1, getStatusColor(t1));
+  setTxt(2, String(t2, 1) + " C"); setPco(2, getStatusColor(t2));
+  setTxt(3, String(t3, 1) + " C"); setPco(3, getStatusColor(t3));
 
-  // 온도 색상
-  sendCmd("t1.pco=" + String(getStatusColor(t1)));
-  sendCmd("t2.pco=" + String(getStatusColor(t2)));
-  sendCmd("t3.pco=" + String(getStatusColor(t3)));
-
-  // 상태값 (Nextion Timer가 이 값을 읽어 한글 텍스트 표시)
-  sendCmd("n0.val=" + String(getStatusValue(t1)));
-  sendCmd("n1.val=" + String(getStatusValue(t2)));
-  sendCmd("n2.val=" + String(getStatusValue(t3)));
+  // 상태값 (Nextion Timer가 읽어 한글 텍스트 표시)
+  setNum(0, getStatusValue(t1));
+  setNum(1, getStatusValue(t2));
+  setNum(2, getStatusValue(t3));
 
   // 상태 색상
-  sendCmd("t4.pco=" + String(getStatusColor(t1)));
-  sendCmd("t5.pco=" + String(getStatusColor(t2)));
-  sendCmd("t6.pco=" + String(getStatusColor(t3)));
+  setPco(4, getStatusColor(t1));
+  setPco(5, getStatusColor(t2));
+  setPco(6, getStatusColor(t3));
 
   // 최고온도 CELL 찾기
   float maxTemp  = t1;
@@ -138,22 +173,18 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   if (t2 > maxTemp) { maxTemp = t2; maxCell = "CELL2"; }
   if (t3 > maxTemp) { maxTemp = t3; maxCell = "CELL3"; }
 
-  sendCmd("n3.val=" + String(getStatusValue(maxTemp)));
-  sendCmd("t7.pco=" + String(getStatusColor(maxTemp)));
-  sendCmd("t8.txt=\"" + maxCell + "\"");
-  sendCmd("t8.pco=" + String(getStatusColor(maxTemp)));
-  sendCmd("t9.txt=\"" + String(maxTemp, 1) + " C\"");
-  sendCmd("t9.pco=" + String(getStatusColor(maxTemp)));
-
-  // t12 : "CELL2" 고정 라벨 — 매 갱신마다 재전송 (페이지 리셋 방어)
-  sendCmd("t12.txt=\"CELL2\"");
-  Serial.println("[DBG] t12 sent: CELL2");
+  setNum(3, getStatusValue(maxTemp));
+  setPco(7, getStatusColor(maxTemp));
+  setTxt(8, maxCell);                 setPco(8, getStatusColor(maxTemp));
+  setTxt(9, String(maxTemp, 1) + " C"); setPco(9, getStatusColor(maxTemp));
 
   // t10 : CELL2(NTC2/A1) 온도
-  String t10val = String(t2, 1) + " C";
-  sendCmd("t10.txt=\"" + t10val + "\"");
-  sendCmd("t10.pco=" + String(getStatusColor(t2)));
-  Serial.println("[DBG] t10 sent: " + t10val);
+  setTxt(10, String(t2, 1) + " C");
+  setPco(10, getStatusColor(t2));
+
+  // t12 : "CELL2" 고정 라벨 — 글자색(흰색)을 함께 지정해야 보임
+  setTxt(12, "CELL2");
+  setPco(12, 65535);   // 흰색. 배경이 밝으면 0(검정)으로 변경
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -251,21 +282,7 @@ void setup() {
 
   delay(1000);
 
-  // 메인(NTC) 페이지 컴포넌트 초기값 설정
-  // (Thermal 페이지 전환 전에 미리 보내도 Nextion이 값을 저장함)
-  sendCmd("t1.txt=\"--.- C\"");
-  sendCmd("t2.txt=\"--.- C\"");
-  sendCmd("t3.txt=\"--.- C\"");
-  sendCmd("t4.txt=\"WAIT\""); sendCmd("t4.pco=2016");
-  sendCmd("t5.txt=\"WAIT\""); sendCmd("t5.pco=2016");
-  sendCmd("t6.txt=\"WAIT\""); sendCmd("t6.pco=2016");
-  sendCmd("t7.txt=\"WAIT\""); sendCmd("t7.pco=2016");
-  sendCmd("t8.txt=\"-\"");
-  sendCmd("t9.txt=\"--.- C\"");
-  sendCmd("t10.txt=\"--.- C\"");
-  sendCmd("t12.txt=\"CELL2\"");    // 고정 라벨 — 이후 변경 없음
-  sendCmd("n0.val=0"); sendCmd("n1.val=0");
-  sendCmd("n2.val=0"); sendCmd("n3.val=0");
+  resetDisplayCache();   // 캐시 초기화 → 첫 갱신 시 전체 1회 전송
 
   // Thermal 페이지로 이동
   sendCmd("page Thermal");
