@@ -214,10 +214,6 @@ void updateNtcDisplay(float t1, float t2, float t3) {
 void fillRect(int x, int y, int w, int h, uint16_t color) {
   sendCmd("fill " + String(x) + "," + String(y) + "," +
           String(w) + "," + String(h) + "," + String(color));
-  // fill은 한 칸(50×40≈2000px)을 실제로 칠하는 무거운 작업이라
-  // sendCmd의 delay(5)만으로는 Nextion이 다 그리기 전에 다음 명령이 도착해
-  // 수신 버퍼가 밀리다 깨진다. 추가 정착 시간으로 그리기 속도에 송신을 맞춘다.
-  delay(10);
 }
 
 // ─── 열화상 깜빡임 방지 캐시 ────────────────────────────────────────────────
@@ -285,31 +281,24 @@ void updateIrStatus(float maxTemp) {
   }
 }
 
-// 한 번(=1 루프) 호출 시 최대 이 개수만큼만 fill 한다.
-// 장면이 크게 바뀌어 많은 칸이 동시에 변해도 명령을 분산 전송하여
-// Nextion 수신 버퍼 폭주(→ 사각형이 엉키는 화면 깨짐)를 방지한다.
-// 못 그린 칸은 캐시(heatCache)에 반영되지 않으므로 다음 루프에서 이어 그려진다.
-const int MAX_FILLS_PER_PASS = 8;
-
+// 한 번의 렌더에서 "바뀐 칸 전부"를 그려 완결된 한 장의 프레임을 만든다.
+// (프레임을 여러 패스로 쪼개면 서로 다른 시점의 칸이 섞여 화면이 찢어져 보임 = 깨짐)
+// 색이 바뀐 칸만 그리므로(heatCache) 정상 상태엔 거의 전송이 없어 깜빡임도 없다.
 void renderHeatmap(float pixels[8][8]) {
-  int budget = MAX_FILLS_PER_PASS;
   for (int row = 0; row < GRID_H; row++) {
     for (int col = 0; col < GRID_W; col++) {
-      checkSerial();
       if (!isThermalPage) return;   // 페이지 이탈 시 중단
 
       float gx   = col * 7.0f / (GRID_W - 1);
       float gy   = row * 7.0f / (GRID_H - 1);
       // 0.5°C 단위 양자화: AMG8833 픽셀 노이즈(±0.3°C)로 인한 미세 색상 변화를 억제하여
-      // heatCache 미스를 줄이고 t0 영역 깜빡임을 제거한다.
+      // heatCache 미스를 줄이고 불필요한 재그리기를 막는다.
       float temp = roundf(bilinear(pixels, gx, gy) * 2.0f) / 2.0f;
       int color  = (int)tempToColor(temp);
 
-      if (heatCache[row][col] == color) continue;   // 색 변화 없으면 건너뜀 → 깜빡임 없음
+      if (heatCache[row][col] == color) continue;   // 색 변화 없으면 건너뜀
       heatCache[row][col] = color;
       fillRect(T0_X + col*CELL_W, T0_Y + row*CELL_H, CELL_W, CELL_H, color);
-
-      if (--budget <= 0) return;   // 이번 패스 한도 도달 → 나머지는 다음 루프에서
     }
   }
 }
@@ -374,14 +363,18 @@ void loop() {
     Serial.print(" NTC3:"); Serial.print(t3, 1);
     Serial.print(" | Page:"); Serial.println(isThermalPage ? "THERMAL" : "NTC");
 
-    // 페이지 무관 항상 갱신 — Nextion이 값을 내부 저장, 페이지 전환 시 즉시 표시
-    // (이전에 !isThermalPage 조건이 있었으나 page 감지 오류 시 t10/t12 미출력됨)
-    updateNtcDisplay(t1, t2, t3);
+    // NTC 명령은 NTC 페이지일 때만 전송.
+    // Thermal 페이지에서 보내면 다른 페이지 컴포넌트(t1~t12)를 향한 명령이
+    // 열화상 fill과 시리얼 버스를 다퉈 화면 깨짐을 유발한다.
+    // (NTC 페이지 진입 시 ntcNeedsRefresh+캐시리셋+2초 강제전송으로 즉시 복원되므로 누락 없음)
+    if (!isThermalPage) {
+      updateNtcDisplay(t1, t2, t3);
+    }
   }
 
-  // ── AMG8833 열화상 (Thermal 페이지 전용, 프레임 제한) ──────────────────
-  // HEATMAP_INTERVAL 주기로만 렌더 → 명령 전송이 일정하게 분산되어
-  // Nextion이 그리기를 따라잡을 수 있고 버퍼가 넘치지 않는다.
+  // ── AMG8833 열화상 (Thermal 페이지 전용, 프레임 주기 고정) ──────────────
+  // HEATMAP_INTERVAL 주기로 "바뀐 칸 전부"를 한 번에 그려 완결된 프레임을 만든다.
+  // 정상 상태엔 캐시 덕에 거의 전송이 없고, 변할 때만 그 칸들이 한 번에 갱신된다.
   if (isThermalPage && (now - lastHeatmapAt >= HEATMAP_INTERVAL)) {
     lastHeatmapAt = now;
 
