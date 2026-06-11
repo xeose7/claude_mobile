@@ -6,7 +6,7 @@
     Thermal 페이지  : AMG8833 8×8 히트맵 + t11(전체 상태 표시)
     메인(NTC) 페이지: t1~t3(온도값), t4~t6(상태색),
                      t7(최고온 상태색), t8(최고온 CELL명),
-                     t9(최고온도), t10(서미스터 최고온도), t12("서미스터2" 고정 라벨),
+                     t9(최고온도), t10(CELL2 온도), t12("CELL2" 고정 라벨),
                      n0~n3(상태값 0/1/2)
 
   하드웨어 연결:
@@ -135,9 +135,9 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   sendCmd("t9.txt=\"" + String(maxTemp, 1) + " C\"");
   sendCmd("t9.pco=" + String(getStatusColor(maxTemp)));
 
-  // t10 : 서미스터 3채널 중 최고온도
-  sendCmd("t10.txt=\"" + String(maxTemp, 1) + " C\"");
-  sendCmd("t10.pco=" + String(getStatusColor(maxTemp)));
+  // t10 : CELL2(A1) 온도
+  sendCmd("t10.txt=\"" + String(t2, 1) + " C\"");
+  sendCmd("t10.pco=" + String(getStatusColor(t2)));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -247,7 +247,7 @@ void setup() {
   sendCmd("t8.txt=\"-\"");
   sendCmd("t9.txt=\"--.- C\"");
   sendCmd("t10.txt=\"--.- C\"");
-  sendCmd("t12.txt=\"서미스터2\"");  // 고정 라벨 — 이후 변경 없음
+  sendCmd("t12.txt=\"CELL2\"");    // 고정 라벨 — 이후 변경 없음
   sendCmd("n0.val=0"); sendCmd("n1.val=0");
   sendCmd("n2.val=0"); sendCmd("n3.val=0");
 
