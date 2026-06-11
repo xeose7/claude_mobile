@@ -43,7 +43,7 @@ const float ADC_MAX            = 4095.0f;
 
 // ── 상태 변수 ─────────────────────────────────────────────────────────────
 bool          isThermalPage   = true;
-bool          ntcNeedsRefresh = false;   // NTC 페이지 진입 시 즉시 1회 갱신용
+bool          ntcNeedsRefresh = true;    // 부팅 직후 NTC 즉시 1회 갱신
 int           prevStatus      = -1;
 unsigned long previousMillis  = 0;
 const unsigned long UPDATE_INTERVAL = 1000;
@@ -67,11 +67,19 @@ void checkSerial() {
   while (Serial1.available() > 0) {
     byte data = Serial1.read();
     if (data == 0x00) {
-      isThermalPage   = false;
-      ntcNeedsRefresh = true;   // NTC 페이지 진입 → 즉시 t1~t12 다시 그림
-      prevStatus      = -1;     // 복귀 시 t11 강제 재갱신
+      if (isThermalPage) {
+        Serial.println("[PAGE] Thermal → NTC");
+        isThermalPage   = false;
+        ntcNeedsRefresh = true;
+        prevStatus      = -1;
+      }
     }
-    if (data == 0x01) isThermalPage = true;
+    if (data == 0x01) {
+      if (!isThermalPage) {
+        Serial.println("[PAGE] NTC → Thermal");
+        isThermalPage = true;
+      }
+    }
   }
 }
 
@@ -137,12 +145,15 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   sendCmd("t9.txt=\"" + String(maxTemp, 1) + " C\"");
   sendCmd("t9.pco=" + String(getStatusColor(maxTemp)));
 
-  // t12 : "CELL2" 고정 라벨 — 페이지 진입 시 리셋되므로 매 갱신마다 재전송
+  // t12 : "CELL2" 고정 라벨 — 매 갱신마다 재전송 (페이지 리셋 방어)
   sendCmd("t12.txt=\"CELL2\"");
+  Serial.println("[DBG] t12 sent: CELL2");
 
   // t10 : CELL2(NTC2/A1) 온도
-  sendCmd("t10.txt=\"" + String(t2, 1) + " C\"");
+  String t10val = String(t2, 1) + " C";
+  sendCmd("t10.txt=\"" + t10val + "\"");
   sendCmd("t10.pco=" + String(getStatusColor(t2)));
+  Serial.println("[DBG] t10 sent: " + t10val);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,21 +282,20 @@ void loop() {
 
   if (intervalElapsed || ntcNeedsRefresh) {
     if (intervalElapsed) previousMillis = now;
+    ntcNeedsRefresh = false;
 
     float t1 = readTemperature(NTC_PIN1);
     float t2 = readTemperature(NTC_PIN2);
     float t3 = readTemperature(NTC_PIN3);
 
-    Serial.print("NTC1: "); Serial.print(t1, 1);
-    Serial.print(" / NTC2: "); Serial.print(t2, 1);
-    Serial.print(" / NTC3: "); Serial.print(t3, 1);
-    Serial.println(" C");
+    Serial.print("NTC1:"); Serial.print(t1, 1);
+    Serial.print(" NTC2:"); Serial.print(t2, 1);
+    Serial.print(" NTC3:"); Serial.print(t3, 1);
+    Serial.print(" | Page:"); Serial.println(isThermalPage ? "THERMAL" : "NTC");
 
-    // 메인(NTC) 페이지에 있을 때만 NTC 디스플레이 갱신
-    if (!isThermalPage) {
-      updateNtcDisplay(t1, t2, t3);
-      ntcNeedsRefresh = false;   // 진입 직후 1회 갱신 완료
-    }
+    // 페이지 무관 항상 갱신 — Nextion이 값을 내부 저장, 페이지 전환 시 즉시 표시
+    // (이전에 !isThermalPage 조건이 있었으나 page 감지 오류 시 t10/t12 미출력됨)
+    updateNtcDisplay(t1, t2, t3);
   }
 
   // ── AMG8833 열화상 (Thermal 페이지 전용) ──────────────────────────────
