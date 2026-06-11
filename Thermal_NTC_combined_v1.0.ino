@@ -32,18 +32,22 @@ Adafruit_AMG88xx amg;
 #define CELL_H (T0_H / GRID_H)
 
 // ── NTC 서미스터 설정 ──────────────────────────────────────────────────────
-const int   NTC_PIN1           = A0;
-const int   NTC_PIN2           = A1;
-const int   NTC_PIN3           = A2;
-const float SERIES_RESISTOR    = 10000.0f;
-const float NOMINAL_RESISTANCE = 10000.0f;
-const float NOMINAL_TEMPERATURE = 25.0f;
-const float BETA_COEFFICIENT   = 3950.0f;
-const float ADC_MAX            = 4095.0f;
+const int   NTC_PIN1        = A0;
+const int   NTC_PIN2        = A1;
+const int   NTC_PIN3        = A2;
+const float SERIES_RESISTOR = 10000.0f;
+const float ADC_MAX         = 4095.0f;
+
+// ── 2-포인트 캘리브레이션 (실측값) ────────────────────────────────────────
+// 각 채널별로 0°C 및 50°C에서 측정한 NTC 저항값
+const float NTC_R_0C[3]  = {33624.2f, 33614.6f, 33562.3f};  // Ω at 0°C
+const float NTC_R_50C[3] = {3588.0f,  3590.2f,  3587.1f};   // Ω at 50°C
+float ntcBeta[3];  // setup()에서 실측값으로 계산
 
 // ── 상태 변수 ─────────────────────────────────────────────────────────────
 bool          isThermalPage   = true;
 bool          ntcNeedsRefresh = true;    // 부팅 직후 NTC 즉시 1회 갱신
+unsigned long ntcRefreshAt    = 0;       // 페이지 전환 후 딜레이 기준 시각
 int           prevStatus      = -1;
 unsigned long previousMillis  = 0;
 const unsigned long UPDATE_INTERVAL = 1000;
@@ -73,6 +77,7 @@ void checkSerial() {
         Serial.println("[PAGE] Thermal → NTC");
         isThermalPage   = false;
         ntcNeedsRefresh = true;
+        ntcRefreshAt    = millis() + 250;  // Nextion 페이지 전환 완료 대기
         prevStatus      = -1;
         resetDisplayCache();   // 페이지 리셋되었으므로 전체 강제 재전송
       }
@@ -90,18 +95,20 @@ void checkSerial() {
 // NTC 서미스터
 // ═══════════════════════════════════════════════════════════════════════════
 
-float readTemperature(int pin) {
-  // ADC 노이즈로 소수점 끝자리가 흔들리면 표시가 깜빡이므로
-  // 16회 평균으로 안정화한다.
+// ch: 0=CELL1(A0), 1=CELL2(A1), 2=CELL3(A2)
+float readTemperature(int ch) {
+  int pin = (ch == 0) ? NTC_PIN1 : (ch == 1) ? NTC_PIN2 : NTC_PIN3;
+
+  // 16회 평균 → ADC 노이즈 감소 → 소수점 끝자리 안정화 → 깜빡임 방지
   long sum = 0;
   for (int i = 0; i < 16; i++) sum += analogRead(pin);
   int adcValue = sum / 16;
   if (adcValue <= 0)    adcValue = 1;
   if (adcValue >= 4095) adcValue = 4094;
 
-  float R    = SERIES_RESISTOR * ((ADC_MAX / adcValue) - 1.0f);
-  float tempK = 1.0f / (log(R / NOMINAL_RESISTANCE) / BETA_COEFFICIENT
-                        + 1.0f / (NOMINAL_TEMPERATURE + 273.15f));
+  float R = SERIES_RESISTOR * ((ADC_MAX / adcValue) - 1.0f);
+  // 2-포인트 캘리브레이션 Beta 방정식 (0°C 기준점 사용)
+  float tempK = 1.0f / (1.0f/273.15f + log(R / NTC_R_0C[ch]) / ntcBeta[ch]);
   return tempK - 273.15f;
 }
 
@@ -282,6 +289,14 @@ void setup() {
 
   delay(1000);
 
+  // 2-포인트 캘리브레이션 Beta 계산 (B = ln(R0/R50) / (1/T0 - 1/T50))
+  for (int i = 0; i < 3; i++) {
+    ntcBeta[i] = log(NTC_R_0C[i] / NTC_R_50C[i])
+                 / (1.0f / 273.15f - 1.0f / 323.15f);
+    Serial.print("ntcBeta["); Serial.print(i); Serial.print("]=");
+    Serial.print(ntcBeta[i], 1); Serial.println();
+  }
+
   resetDisplayCache();   // 캐시 초기화 → 첫 갱신 시 전체 1회 전송
 
   // Thermal 페이지로 이동
@@ -297,13 +312,13 @@ void loop() {
   unsigned long now = millis();
   bool intervalElapsed = (now - previousMillis >= UPDATE_INTERVAL);
 
-  if (intervalElapsed || ntcNeedsRefresh) {
+  if ((intervalElapsed || ntcNeedsRefresh) && (now >= ntcRefreshAt)) {
     if (intervalElapsed) previousMillis = now;
     ntcNeedsRefresh = false;
 
-    float t1 = readTemperature(NTC_PIN1);
-    float t2 = readTemperature(NTC_PIN2);
-    float t3 = readTemperature(NTC_PIN3);
+    float t1 = readTemperature(0);
+    float t2 = readTemperature(1);
+    float t3 = readTemperature(2);
 
     Serial.print("NTC1:"); Serial.print(t1, 1);
     Serial.print(" NTC2:"); Serial.print(t2, 1);
