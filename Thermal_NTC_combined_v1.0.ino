@@ -42,9 +42,10 @@ const float BETA_COEFFICIENT   = 3950.0f;
 const float ADC_MAX            = 4095.0f;
 
 // ── 상태 변수 ─────────────────────────────────────────────────────────────
-bool          isThermalPage  = true;
-int           prevStatus     = -1;
-unsigned long previousMillis = 0;
+bool          isThermalPage   = true;
+bool          ntcNeedsRefresh = false;   // NTC 페이지 진입 시 즉시 1회 갱신용
+int           prevStatus      = -1;
+unsigned long previousMillis  = 0;
 const unsigned long UPDATE_INTERVAL = 1000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -66,8 +67,9 @@ void checkSerial() {
   while (Serial1.available() > 0) {
     byte data = Serial1.read();
     if (data == 0x00) {
-      isThermalPage = false;
-      prevStatus = -1;   // 복귀 시 t11 강제 재갱신
+      isThermalPage   = false;
+      ntcNeedsRefresh = true;   // NTC 페이지 진입 → 즉시 t1~t12 다시 그림
+      prevStatus      = -1;     // 복귀 시 t11 강제 재갱신
     }
     if (data == 0x01) isThermalPage = true;
   }
@@ -135,7 +137,10 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   sendCmd("t9.txt=\"" + String(maxTemp, 1) + " C\"");
   sendCmd("t9.pco=" + String(getStatusColor(maxTemp)));
 
-  // t10 : CELL2(A1) 온도
+  // t12 : "CELL2" 고정 라벨 — 페이지 진입 시 리셋되므로 매 갱신마다 재전송
+  sendCmd("t12.txt=\"CELL2\"");
+
+  // t10 : CELL2(NTC2/A1) 온도
   sendCmd("t10.txt=\"" + String(t2, 1) + " C\"");
   sendCmd("t10.pco=" + String(getStatusColor(t2)));
 }
@@ -260,10 +265,12 @@ void setup() {
 void loop() {
   checkSerial();
 
-  // ── NTC 읽기 (1초 주기) ─────────────────────────────────────────────────
+  // ── NTC 읽기 (1초 주기 또는 페이지 진입 즉시) ────────────────────────────
   unsigned long now = millis();
-  if (now - previousMillis >= UPDATE_INTERVAL) {
-    previousMillis = now;
+  bool intervalElapsed = (now - previousMillis >= UPDATE_INTERVAL);
+
+  if (intervalElapsed || ntcNeedsRefresh) {
+    if (intervalElapsed) previousMillis = now;
 
     float t1 = readTemperature(NTC_PIN1);
     float t2 = readTemperature(NTC_PIN2);
@@ -277,6 +284,7 @@ void loop() {
     // 메인(NTC) 페이지에 있을 때만 NTC 디스플레이 갱신
     if (!isThermalPage) {
       updateNtcDisplay(t1, t2, t3);
+      ntcNeedsRefresh = false;   // 진입 직후 1회 갱신 완료
     }
   }
 
