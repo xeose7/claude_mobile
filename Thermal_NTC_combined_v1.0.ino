@@ -50,7 +50,9 @@ bool          ntcNeedsRefresh    = true;   // 부팅 직후 NTC 즉시 1회 갱�
 unsigned long t10t12ForceUntil   = 0;      // 이 시각까지 t10/t12 캐시 무효화 → 강제 재전송
 int           prevStatus         = -1;
 unsigned long previousMillis     = 0;
-const unsigned long UPDATE_INTERVAL = 1000;
+unsigned long lastHeatmapAt      = 0;      // 열화상 프레임 타이머
+const unsigned long UPDATE_INTERVAL   = 1000;
+const unsigned long HEATMAP_INTERVAL  = 120;   // 열화상 최소 갱신 간격(ms) → 전송 버스트 억제
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Nextion HMI 통신 (Serial1)
@@ -212,6 +214,10 @@ void updateNtcDisplay(float t1, float t2, float t3) {
 void fillRect(int x, int y, int w, int h, uint16_t color) {
   sendCmd("fill " + String(x) + "," + String(y) + "," +
           String(w) + "," + String(h) + "," + String(color));
+  // fill은 한 칸(50×40≈2000px)을 실제로 칠하는 무거운 작업이라
+  // sendCmd의 delay(5)만으로는 Nextion이 다 그리기 전에 다음 명령이 도착해
+  // 수신 버퍼가 밀리다 깨진다. 추가 정착 시간으로 그리기 속도에 송신을 맞춘다.
+  delay(10);
 }
 
 // ─── 열화상 깜빡임 방지 캐시 ────────────────────────────────────────────────
@@ -283,7 +289,7 @@ void updateIrStatus(float maxTemp) {
 // 장면이 크게 바뀌어 많은 칸이 동시에 변해도 명령을 분산 전송하여
 // Nextion 수신 버퍼 폭주(→ 사각형이 엉키는 화면 깨짐)를 방지한다.
 // 못 그린 칸은 캐시(heatCache)에 반영되지 않으므로 다음 루프에서 이어 그려진다.
-const int MAX_FILLS_PER_PASS = 12;
+const int MAX_FILLS_PER_PASS = 8;
 
 void renderHeatmap(float pixels[8][8]) {
   int budget = MAX_FILLS_PER_PASS;
@@ -373,8 +379,12 @@ void loop() {
     updateNtcDisplay(t1, t2, t3);
   }
 
-  // ── AMG8833 열화상 (Thermal 페이지 전용) ──────────────────────────────
-  if (isThermalPage) {
+  // ── AMG8833 열화상 (Thermal 페이지 전용, 프레임 제한) ──────────────────
+  // HEATMAP_INTERVAL 주기로만 렌더 → 명령 전송이 일정하게 분산되어
+  // Nextion이 그리기를 따라잡을 수 있고 버퍼가 넘치지 않는다.
+  if (isThermalPage && (now - lastHeatmapAt >= HEATMAP_INTERVAL)) {
+    lastHeatmapAt = now;
+
     float pixels[64];
     amg.readPixels(pixels);
 
@@ -390,7 +400,5 @@ void loop() {
     }
   }
 
-  // 짧은 루프 주기 → fill 버짓 분산이 자주 이어져 열화상이 매끄럽게 갱신된다.
-  // (명령 간 간격은 sendCmd의 delay(5)가 보장하므로 버퍼는 안전)
-  delay(20);
+  delay(10);
 }
