@@ -6,7 +6,8 @@
     Thermal 페이지  : AMG8833 8×8 히트맵 + t11(전체 상태 표시)
     메인(NTC) 페이지: t1~t3(온도값), t4~t6(상태색),
                      t7(최고온 상태색), t8(최고온 CELL명),
-                     t9(최고온도), n0~n3(상태값 0/1/2)
+                     t9(최고온도), t10(CELL2 온도), t12("CELL" 고정 라벨),
+                     n0~n3(상태값 0/1/2)
 
   하드웨어 연결:
     AMG8833  → I2C : SDA(A4), SCL(A5), VCC=3.3V, GND
@@ -133,6 +134,10 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   sendCmd("t8.pco=" + String(getStatusColor(maxTemp)));
   sendCmd("t9.txt=\"" + String(maxTemp, 1) + " C\"");
   sendCmd("t9.pco=" + String(getStatusColor(maxTemp)));
+
+  // t10 : CELL2(A1) 온도 전용 표시
+  sendCmd("t10.txt=\"" + String(t2, 1) + " C\"");
+  sendCmd("t10.pco=" + String(getStatusColor(t2)));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -241,6 +246,8 @@ void setup() {
   sendCmd("t7.txt=\"WAIT\""); sendCmd("t7.pco=2016");
   sendCmd("t8.txt=\"-\"");
   sendCmd("t9.txt=\"--.- C\"");
+  sendCmd("t10.txt=\"--.- C\"");
+  sendCmd("t12.txt=\"CELL\"");    // 고정 라벨 — 이후 변경 없음
   sendCmd("n0.val=0"); sendCmd("n1.val=0");
   sendCmd("n2.val=0"); sendCmd("n3.val=0");
 
