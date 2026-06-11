@@ -56,7 +56,8 @@ const unsigned long UPDATE_INTERVAL = 1000;
 // Nextion HMI 통신 (Serial1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-void resetDisplayCache();   // 아래에 정의 (checkSerial에서 먼저 호출)
+void resetDisplayCache();    // 아래에 정의 (checkSerial에서 먼저 호출)
+void resetHeatmapCache();    // 열화상 칸 색상 캐시 리셋 (페이지 진입 시 전체 재그리기)
 
 void sendCmd(const String& cmd) {
   Serial1.print(cmd);
@@ -85,7 +86,9 @@ void checkSerial() {
     if (data == 0x01) {
       if (!isThermalPage) {
         Serial.println("[PAGE] NTC → Thermal");
-        isThermalPage = true;
+        isThermalPage     = true;
+        prevStatus        = -1;   // t11 강제 재갱신
+        resetHeatmapCache();      // 페이지 리셋되어 열화상 영역 비었으므로 전체 재그리기
       }
     }
   }
@@ -203,6 +206,17 @@ void fillRect(int x, int y, int w, int h, uint16_t color) {
           String(w) + "," + String(h) + "," + String(color));
 }
 
+// ─── 열화상 깜빡임 방지 캐시 ────────────────────────────────────────────────
+// 각 칸의 직전 색상을 기억해두고, 색이 바뀐 칸만 다시 그린다.
+// (매 루프 64칸 전체를 fill하면 화면(t0 영역)이 계속 깜빡임)
+int heatCache[GRID_H][GRID_W];
+
+void resetHeatmapCache() {
+  for (int r = 0; r < GRID_H; r++)
+    for (int c = 0; c < GRID_W; c++)
+      heatCache[r][c] = -1;   // 다음 렌더 시 전체 강제 재그리기
+}
+
 uint16_t tempToColor(float temp) {
   float r, g, b;
   if (temp < 35.0f) {
@@ -265,8 +279,11 @@ void renderHeatmap(float pixels[8][8]) {
 
       float gx = col * 7.0f / (GRID_W - 1);
       float gy = row * 7.0f / (GRID_H - 1);
-      fillRect(T0_X + col*CELL_W, T0_Y + row*CELL_H, CELL_W, CELL_H,
-               tempToColor(bilinear(pixels, gx, gy)));
+      int color = tempToColor(bilinear(pixels, gx, gy));
+
+      if (heatCache[row][col] == color) continue;   // 색 변화 없으면 건너뜀 → 깜빡임 없음
+      heatCache[row][col] = color;
+      fillRect(T0_X + col*CELL_W, T0_Y + row*CELL_H, CELL_W, CELL_H, color);
     }
   }
 }
@@ -297,7 +314,13 @@ void setup() {
     Serial.print(ntcBeta[i], 1); Serial.println();
   }
 
-  resetDisplayCache();   // 캐시 초기화 → 첫 갱신 시 전체 1회 전송
+  resetDisplayCache();   // 텍스트/색상 캐시 초기화 → 첫 갱신 시 전체 1회 전송
+  resetHeatmapCache();   // 열화상 칸 캐시 초기화 → 첫 렌더 시 전체 1회 그리기
+
+  // bkcmd=0 : 명령 성공/실패 응답(0x01/0x00) 자동 회신 비활성화.
+  // 이 응답이 페이지 전환 바이트(0x00/0x01)와 충돌해 t10/t12 미갱신을 유발하므로 반드시 꺼야 함.
+  sendCmd("bkcmd=0");
+  delay(50);
 
   // Thermal 페이지로 이동
   sendCmd("page Thermal");
