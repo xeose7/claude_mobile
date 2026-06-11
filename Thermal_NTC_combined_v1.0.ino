@@ -279,7 +279,14 @@ void updateIrStatus(float maxTemp) {
   }
 }
 
+// 한 번(=1 루프) 호출 시 최대 이 개수만큼만 fill 한다.
+// 장면이 크게 바뀌어 많은 칸이 동시에 변해도 명령을 분산 전송하여
+// Nextion 수신 버퍼 폭주(→ 사각형이 엉키는 화면 깨짐)를 방지한다.
+// 못 그린 칸은 캐시(heatCache)에 반영되지 않으므로 다음 루프에서 이어 그려진다.
+const int MAX_FILLS_PER_PASS = 12;
+
 void renderHeatmap(float pixels[8][8]) {
+  int budget = MAX_FILLS_PER_PASS;
   for (int row = 0; row < GRID_H; row++) {
     for (int col = 0; col < GRID_W; col++) {
       checkSerial();
@@ -295,6 +302,8 @@ void renderHeatmap(float pixels[8][8]) {
       if (heatCache[row][col] == color) continue;   // 색 변화 없으면 건너뜀 → 깜빡임 없음
       heatCache[row][col] = color;
       fillRect(T0_X + col*CELL_W, T0_Y + row*CELL_H, CELL_W, CELL_H, color);
+
+      if (--budget <= 0) return;   // 이번 패스 한도 도달 → 나머지는 다음 루프에서
     }
   }
 }
@@ -381,5 +390,7 @@ void loop() {
     }
   }
 
-  delay(50);
+  // 짧은 루프 주기 → fill 버짓 분산이 자주 이어져 열화상이 매끄럽게 갱신된다.
+  // (명령 간 간격은 sendCmd의 delay(5)가 보장하므로 버퍼는 안전)
+  delay(20);
 }
