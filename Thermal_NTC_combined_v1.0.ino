@@ -45,11 +45,11 @@ const float NTC_R_50C[3] = {3588.0f,  3590.2f,  3587.1f};   // Ω at 50°C
 float ntcBeta[3];  // setup()에서 실측값으로 계산
 
 // ── 상태 변수 ─────────────────────────────────────────────────────────────
-bool          isThermalPage   = true;
-bool          ntcNeedsRefresh = true;    // 부팅 직후 NTC 즉시 1회 갱신
-unsigned long ntcRefreshAt    = 0;       // 페이지 전환 후 딜레이 기준 시각
-int           prevStatus      = -1;
-unsigned long previousMillis  = 0;
+bool          isThermalPage      = true;
+bool          ntcNeedsRefresh    = true;   // 부팅 직후 NTC 즉시 1회 갱신
+unsigned long t10t12ForceUntil   = 0;      // 이 시각까지 t10/t12 캐시 무효화 → 강제 재전송
+int           prevStatus         = -1;
+unsigned long previousMillis     = 0;
 const unsigned long UPDATE_INTERVAL = 1000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -74,22 +74,22 @@ void checkSerial() {
   while (Serial1.available() > 0) {
     byte data = Serial1.read();
     if (data == 0x00) {
-      if (isThermalPage) {
-        Serial.println("[PAGE] Thermal → NTC");
-        isThermalPage   = false;
-        ntcNeedsRefresh = true;
-        ntcRefreshAt    = millis() + 250;  // Nextion 페이지 전환 완료 대기
-        prevStatus      = -1;
-        resetDisplayCache();   // 페이지 리셋되었으므로 전체 강제 재전송
-      }
+      // NTC 페이지 진입 — isThermalPage 조건 없이 항상 처리.
+      // 조건을 두면 Thermal→NTC 전환 신호(0x01)를 못 받았을 때 캐시가 리셋되지 않아
+      // Nextion 페이지 초기화가 t10/t12를 지워도 재전송하지 못하는 문제 발생.
+      Serial.println("[PAGE] → NTC");
+      isThermalPage    = false;
+      ntcNeedsRefresh  = true;
+      prevStatus       = -1;
+      resetDisplayCache();
+      t10t12ForceUntil = millis() + 2000;  // 2초간 t10/t12 강제 재전송 (Nextion 초기화 덮어쓰기 방어)
     }
     if (data == 0x01) {
-      if (!isThermalPage) {
-        Serial.println("[PAGE] NTC → Thermal");
-        isThermalPage     = true;
-        prevStatus        = -1;   // t11 강제 재갱신
-        resetHeatmapCache();      // 페이지 리셋되어 열화상 영역 비었으므로 전체 재그리기
-      }
+      // Thermal 페이지 진입 — 마찬가지로 조건 없이 항상 처리
+      Serial.println("[PAGE] → Thermal");
+      isThermalPage = true;
+      prevStatus    = -1;
+      resetHeatmapCache();
     }
   }
 }
@@ -188,6 +188,14 @@ void updateNtcDisplay(float t1, float t2, float t3) {
   setTxt(8, maxCell);                 setPco(8, getStatusColor(maxTemp));
   setTxt(9, String(maxTemp, 1) + " C"); setPco(9, getStatusColor(maxTemp));
 
+  // t10/t12 : 페이지 전환 후 2초간 캐시를 강제 무효화하여 반드시 재전송.
+  // Nextion 페이지 초기화(Pre/Post-initialize)가 컴포넌트를 기본값으로 되돌려도
+  // 이 기간 동안 매 업데이트마다 덮어씌우므로 값이 사라지지 않는다.
+  if (millis() < t10t12ForceUntil) {
+    cTxt[10] = "\x01"; cPco[10] = -1;
+    cTxt[12] = "\x01"; cPco[12] = -1;
+  }
+
   // t10 : CELL2(NTC2/A1) 온도
   setTxt(10, String(t2, 1) + " C");
   setPco(10, getStatusColor(t2));
@@ -277,9 +285,12 @@ void renderHeatmap(float pixels[8][8]) {
       checkSerial();
       if (!isThermalPage) return;   // 페이지 이탈 시 중단
 
-      float gx = col * 7.0f / (GRID_W - 1);
-      float gy = row * 7.0f / (GRID_H - 1);
-      int color = tempToColor(bilinear(pixels, gx, gy));
+      float gx   = col * 7.0f / (GRID_W - 1);
+      float gy   = row * 7.0f / (GRID_H - 1);
+      // 0.5°C 단위 양자화: AMG8833 픽셀 노이즈(±0.3°C)로 인한 미세 색상 변화를 억제하여
+      // heatCache 미스를 줄이고 t0 영역 깜빡임을 제거한다.
+      float temp = roundf(bilinear(pixels, gx, gy) * 2.0f) / 2.0f;
+      int color  = (int)tempToColor(temp);
 
       if (heatCache[row][col] == color) continue;   // 색 변화 없으면 건너뜀 → 깜빡임 없음
       heatCache[row][col] = color;
@@ -335,7 +346,7 @@ void loop() {
   unsigned long now = millis();
   bool intervalElapsed = (now - previousMillis >= UPDATE_INTERVAL);
 
-  if ((intervalElapsed || ntcNeedsRefresh) && (now >= ntcRefreshAt)) {
+  if (intervalElapsed || ntcNeedsRefresh) {
     if (intervalElapsed) previousMillis = now;
     ntcNeedsRefresh = false;
 
