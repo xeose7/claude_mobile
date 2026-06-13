@@ -45,21 +45,42 @@ const float NTC_R_50C[3] = {3588.0f,  3590.2f,  3587.1f};   // Ω at 50°C
 float ntcBeta[3];  // setup()에서 실측값으로 계산
 
 // ── 상태 변수 ─────────────────────────────────────────────────────────────
-bool          isThermalPage      = true;
-bool          ntcNeedsRefresh    = true;   // 부팅 직후 NTC 즉시 1회 갱신
-unsigned long t10t12ForceUntil   = 0;      // 이 시각까지 t10/t12 캐시 무효화 → 강제 재전송
-int           prevStatus         = -1;
-unsigned long previousMillis     = 0;
-unsigned long lastHeatmapAt      = 0;      // 열화상 프레임 타이머
+bool          isThermalPage           = true;
+bool          ntcNeedsRefresh         = true;   // 부팅 직후 NTC 즉시 1회 갱신
+unsigned long t10t12ForceUntil        = 0;      // 이 시각까지 t10/t12 캐시 무효화 → 강제 재전송
+int           prevStatus              = -1;
+unsigned long previousMillis          = 0;
+unsigned long lastHeatmapAt           = 0;      // 열화상 프레임 타이머
+unsigned long thermalPageEntryAt      = 0;      // Thermal 페이지 진입 시각
+bool          thermalPageSetupPending = false;  // 진입 후 500ms 안정화 대기 중
 const unsigned long UPDATE_INTERVAL   = 1000;
-const unsigned long HEATMAP_INTERVAL  = 120;   // 열화상 최소 갱신 간격(ms) → 전송 버스트 억제
+const unsigned long HEATMAP_INTERVAL  = 120;   // 열화상 최소 갱신 간격(ms)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Nextion HMI 통신 (Serial1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-void resetDisplayCache();    // 아래에 정의 (checkSerial에서 먼저 호출)
-void resetHeatmapCache();    // 열화상 칸 색상 캐시 리셋 (페이지 진입 시 전체 재그리기)
+void sendCmd(const String& cmd);   // 아래에 정의
+void resetDisplayCache();          // 아래에 정의 (checkSerial에서 먼저 호출)
+void resetHeatmapCache();          // 열화상 칸 색상 캐시 리셋 (페이지 진입 시 전체 재그리기)
+
+// Thermal 페이지 진입 후 Nextion 초기화 완료를 기다린 뒤 호출하는 안정화 루틴.
+// Nextion이 페이지 컴포넌트를 다 그린 후 실행해야 하므로 진입 신호 수신 즉시 호출하면 안 됨.
+void setupThermalPage() {
+  // t0.sta=0 : "배경 없음(투명)" 모드 — 이후 t0가 어떤 이유로 재그려져도
+  // 배경색으로 fill 결과물을 덮지 않아 히트맵이 지워지지 않는다.
+  sendCmd("t0.sta=0");
+  sendCmd("t0.txt=\"\"");
+
+  // Nextion 페이지에 타이머(tm0~tm2)가 있으면 주기적으로 t0를 갱신(초기화)하여
+  // fill 결과물을 덮어쓸 수 있으므로 모두 비활성화한다 (없으면 명령 무시됨).
+  sendCmd("tm0.en=0");
+  sendCmd("tm1.en=0");
+  sendCmd("tm2.en=0");
+
+  resetHeatmapCache();          // 다음 렌더에서 64칸 전체 강제 재그리기
+  lastHeatmapAt = millis();     // 프레임 타이머 리셋 — HEATMAP_INTERVAL 후 첫 렌더
+}
 
 void sendCmd(const String& cmd) {
   Serial1.print(cmd);
@@ -87,11 +108,15 @@ void checkSerial() {
       t10t12ForceUntil = millis() + 2000;  // 2초간 t10/t12 강제 재전송 (Nextion 초기화 덮어쓰기 방어)
     }
     if (data == 0x01) {
-      // Thermal 페이지 진입 — 마찬가지로 조건 없이 항상 처리
+      // Thermal 페이지 진입 — 마찬가지로 조건 없이 항상 처리.
+      // setupThermalPage()는 즉시 호출하지 않고 500ms 후(loop에서)에 호출한다.
+      // Nextion이 페이지 컴포넌트를 모두 그리기 전에 fill을 보내면
+      // 컴포넌트 배경이 fill 위에 덮여 히트맵이 지워지기 때문.
       Serial.println("[PAGE] → Thermal");
-      isThermalPage = true;
-      prevStatus    = -1;
-      resetHeatmapCache();
+      isThermalPage             = true;
+      prevStatus                = -1;
+      thermalPageEntryAt        = millis();
+      thermalPageSetupPending   = true;
     }
   }
 }
@@ -337,14 +362,23 @@ void setup() {
   sendCmd("bkcmd=0");
   delay(50);
 
-  // Thermal 페이지로 이동
+  // Thermal 페이지로 이동 후 500ms 대기 → Nextion 페이지 초기화 완료 후 안정화 적용
   sendCmd("page Thermal");
   delay(500);
-  sendCmd("t0.txt=\"\"");
+  setupThermalPage();   // t0.sta=0 + 타이머 비활성화 + 캐시 리셋
 }
 
 void loop() {
   checkSerial();
+
+  // ── Thermal 페이지 진입 후 500ms 안정화 완료 시 setupThermalPage 실행 ─────
+  // Nextion이 페이지 컴포넌트를 전부 그린 다음에 t0.sta=0 및 타이머 비활성화를 보내야
+  // 컴포넌트 초기화가 우리 설정을 덮어쓰지 않는다.
+  if (thermalPageSetupPending && isThermalPage &&
+      (millis() - thermalPageEntryAt >= 500)) {
+    thermalPageSetupPending = false;
+    setupThermalPage();
+  }
 
   // ── NTC 읽기 (1초 주기 또는 페이지 진입 즉시) ────────────────────────────
   unsigned long now = millis();
@@ -373,9 +407,10 @@ void loop() {
   }
 
   // ── AMG8833 열화상 (Thermal 페이지 전용, 프레임 주기 고정) ──────────────
-  // HEATMAP_INTERVAL 주기로 "바뀐 칸 전부"를 한 번에 그려 완결된 프레임을 만든다.
-  // 정상 상태엔 캐시 덕에 거의 전송이 없고, 변할 때만 그 칸들이 한 번에 갱신된다.
-  if (isThermalPage && (now - lastHeatmapAt >= HEATMAP_INTERVAL)) {
+  // thermalPageSetupPending 동안은 렌더 금지 — setupThermalPage()가 완료된 뒤부터
+  // HEATMAP_INTERVAL 간격으로 바뀐 칸만 그려 완결된 한 프레임을 만든다.
+  if (isThermalPage && !thermalPageSetupPending &&
+      (now - lastHeatmapAt >= HEATMAP_INTERVAL)) {
     lastHeatmapAt = now;
 
     float pixels[64];
