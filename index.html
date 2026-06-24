@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1f2933" />
+  <title>WireDraw · 배선도 작성 툴</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 상단 툴바 -->
+    <header class="toolbar">
+      <div class="toolbar-group brand">
+        <span class="logo">⚡</span>
+        <span class="title">WireDraw</span>
+      </div>
+
+      <div class="toolbar-group" role="toolbar" aria-label="도구">
+        <button class="tool-btn" data-tool="select" title="선택 / 이동 (V)">
+          <span class="ico">🖱️</span><span class="lbl">선택</span>
+        </button>
+        <button class="tool-btn" data-tool="wire" title="배선 그리기 (W)">
+          <span class="ico">〰️</span><span class="lbl">배선</span>
+        </button>
+        <button class="tool-btn" data-tool="pan" title="화면 이동 (스페이스)">
+          <span class="ico">✋</span><span class="lbl">이동</span>
+        </button>
+        <button class="tool-btn" data-tool="delete" title="삭제 모드 (X)">
+          <span class="ico">🗑️</span><span class="lbl">삭제</span>
+        </button>
+      </div>
+
+      <div class="toolbar-group">
+        <button id="btn-rotate" class="flat-btn" title="회전 (R)">⟳ 회전</button>
+        <button id="btn-duplicate" class="flat-btn" title="복제 (Ctrl+D)">⧉ 복제</button>
+        <button id="btn-deleteSel" class="flat-btn" title="삭제 (Del)">🗑 삭제</button>
+      </div>
+
+      <div class="toolbar-group">
+        <button id="btn-undo" class="flat-btn" title="실행 취소 (Ctrl+Z)">↶</button>
+        <button id="btn-redo" class="flat-btn" title="다시 실행 (Ctrl+Y)">↷</button>
+        <label class="snap-toggle" title="그리드 스냅">
+          <input type="checkbox" id="snap-toggle" checked /> 스냅
+        </label>
+        <label class="snap-toggle" title="그리드 표시">
+          <input type="checkbox" id="grid-toggle" checked /> 격자
+        </label>
+      </div>
+
+      <div class="toolbar-group right">
+        <button id="btn-zoom-out" class="flat-btn">−</button>
+        <span id="zoom-level" class="zoom-level">100%</span>
+        <button id="btn-zoom-in" class="flat-btn">+</button>
+        <button id="btn-zoom-fit" class="flat-btn" title="화면 맞춤">⊡</button>
+      </div>
+
+      <div class="toolbar-group">
+        <button id="btn-new" class="flat-btn">새로 만들기</button>
+        <button id="btn-save" class="flat-btn">저장</button>
+        <button id="btn-load" class="flat-btn">불러오기</button>
+        <div class="menu">
+          <button id="btn-export" class="flat-btn">내보내기 ▾</button>
+          <div class="menu-list" id="export-menu">
+            <button data-export="svg">SVG로 내보내기</button>
+            <button data-export="png">PNG로 내보내기</button>
+            <button data-export="json">JSON 다운로드</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <!-- 부품 팔레트 -->
+      <aside class="palette" id="palette">
+        <div class="palette-search">
+          <input type="text" id="palette-search" placeholder="부품 검색…" />
+        </div>
+        <div id="palette-list"></div>
+      </aside>
+
+      <!-- 캔버스 -->
+      <main class="canvas-wrap">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="hint" id="hint"></div>
+      </main>
+
+      <!-- 속성 패널 -->
+      <aside class="inspector" id="inspector">
+        <div class="inspector-empty" id="inspector-empty">
+          <p>요소를 선택하면<br/>속성이 여기에 표시됩니다.</p>
+        </div>
+        <div class="inspector-body" id="inspector-body" hidden></div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span id="status-coords">x: 0, y: 0</span>
+      <span id="status-info">부품을 캔버스로 드래그하거나 클릭해 배치하세요.</span>
+      <span id="status-count">요소 0 · 배선 0</span>
+    </footer>
+  </div>
+
+  <input type="file" id="file-input" accept=".json,application/json" hidden />
+
+  <script src="components.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>온도감지 모니터링 장치 — 배선도 (Wiring Diagram)</title>
+<style>
+  html,body{margin:0;background:#eef2f6;font-family:'Segoe UI','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;}
+  .page{max-width:2000px;margin:0 auto;padding:16px;}
+  svg{width:100%;height:auto;display:block;background:#fff;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.08);}
+  .dl{margin:10px 4px;}
+  .dl button{padding:8px 14px;font-size:14px;border:1px solid #c3ccd6;border-radius:8px;background:#fff;cursor:pointer;}
+  .dl button:hover{background:#f1f5f9;}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="dl">
+    <button id="btn-svg">SVG 내보내기</button>
+    <button id="btn-png">PNG 내보내기</button>
+  </div>
+  <svg id="diagram" viewBox="0 0 2000 1470" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<script>
+/* =====================================================================
+ * 온도감지 모니터링 장치 배선도 — 재제작본
+ *
+ * 적용된 수정사항:
+ *  (1) 배선(wiresG)을 가장 먼저 그려 맨 뒤 레이어에 둔다. 이후 모듈
+ *      박스(modulesG), 텍스트 라벨(labelsG) 순으로 그려 모듈이 선에
+ *      가려지지 않도록 한다.
+ *  (2) GND(검정)와 5V(빨강 점선) 네트는 연결점(시작점)에서 짧은 스텁만
+ *      그리고 긴 배선은 생략한다. 라벨과 하단 공통 GND 버스 바는 남겨
+ *      연결 의도는 유지한다.
+ * ===================================================================== */
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('diagram');
+
+const wiresG   = mk('g', { id: 'wires' });   // (1) 맨 뒤
+const modulesG = mk('g', { id: 'modules' }); // 그 위
+const labelsG  = mk('g', { id: 'labels' });  // 맨 앞
+svg.append(wiresG, modulesG, labelsG);
+
+// 배경
+mk('rect', { x: 0, y: 0, width: 2000, height: 1470, fill: '#ffffff' }, wiresG);
+
+function mk(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(x, y, str, o = {}, parent = labelsG) {
+  const t = mk('text', {
+    x, y, 'font-size': o.size || 16, 'font-weight': o.weight || 400,
+    fill: o.fill || '#26323d', 'text-anchor': o.anchor || 'start',
+    'font-family': "'Segoe UI','Apple SD Gothic Neo','Malgun Gothic',sans-serif",
+  }, parent);
+  t.textContent = str;
+  return t;
+}
+function poly(points, o, parent = wiresG) {
+  return mk('polyline', {
+    points: points.map(p => p.join(',')).join(' '),
+    fill: 'none', stroke: o.color, 'stroke-width': o.w || 3,
+    'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    'stroke-dasharray': o.dash || 'none',
+  }, parent);
+}
+function dot(x, y, color) {
+  mk('circle', { cx: x, cy: y, r: 5, fill: color, stroke: '#fff', 'stroke-width': 1.5 }, wiresG);
+}
+
+/* ---------------- 색상 팔레트 ---------------- */
+const C = {
+  orange: '#E8821E',   // 서미스터 신호
+  green:  '#2E9E5B',   // I2C
+  blue:   '#2C7BB6',   // UART
+  purple: '#8A2BBE',   // 서보 PWM
+  trig:   '#C0392B',   // 릴레이 트리거
+  v5:     '#E8503A',   // Arduino 5V (점선)
+  vplus:  '#7E1F1F',   // V+ 어댑터 (직결)
+  gnd:    '#1A1A1A',   // GND
+  ac:     '#BFBFBF',   // AC250V (미연결)
+};
+
+/* ---------------- 모듈 정의 ---------------- */
+const P = {}; // 핀 좌표 레지스트리 P['MOD.pin'] = [x,y]
+
+const modules = [
+  { id:'TAP', x:700, y:128, w:500, h:74, fill:'#FAF3DB', stroke:'#C9A227',
+    title:'멀티탭 (벽면 AC 콘센트)', sub:['AC-DC 어댑터 ×3  ※9V 배터리 미사용'],
+    pins:[
+      {id:'A1', label:'A1 V+', x:742, y:202, edge:'B'},
+      {id:'G1', label:'G',     x:818, y:202, edge:'B'},
+      {id:'G2', label:'G',     x:902, y:202, edge:'B'},
+      {id:'A2', label:'A2 V+', x:958, y:202, edge:'B'},
+      {id:'G3', label:'G',     x:1056,y:202, edge:'B'},
+      {id:'A3', label:'A3 V+', x:1118,y:202, edge:'B'},
+    ]},
+
+  { id:'NTC1', x:80, y:348, w:242, h:84, fill:'#FCF5E6', stroke:'#E0A24A',
+    title:'NTC 서미스터 1', sub:['NTC 10k + 10kΩ 분압  ※가정값'],
+    pins:[ {id:'5V',label:'5V',x:322,y:368,edge:'R'},
+           {id:'SIG',label:'신호',x:322,y:390,edge:'R'},
+           {id:'GND',label:'GND',x:322,y:412,edge:'R'} ]},
+
+  { id:'NTC2', x:80, y:470, w:242, h:84, fill:'#FCF5E6', stroke:'#E0A24A',
+    title:'NTC 서미스터 2', sub:['NTC 10k + 10kΩ 분압  ※가정값'],
+    pins:[ {id:'5V',label:'5V',x:322,y:490,edge:'R'},
+           {id:'SIG',label:'신호',x:322,y:512,edge:'R'},
+           {id:'GND',label:'GND',x:322,y:534,edge:'R'} ]},
+
+  { id:'NTC3', x:80, y:580, w:242, h:84, fill:'#FCF5E6', stroke:'#E0A24A',
+    title:'NTC 서미스터 3', sub:['NTC 10k + 10kΩ 분압  ※가정값'],
+    pins:[ {id:'5V',label:'5V',x:322,y:600,edge:'R'},
+           {id:'SIG',label:'신호',x:322,y:622,edge:'R'},
+           {id:'GND',label:'GND',x:322,y:644,edge:'R'} ]},
+
+  { id:'AMG', x:75, y:702, w:298, h:124, fill:'#E9F6EC', stroke:'#3DA35D',
+    title:'AMG8833', sub:['열화상 카메라 (I2C)','전원: Arduino 5V'],
+    pins:[ {id:'VCC',label:'VCC',x:373,y:726,edge:'R'},
+           {id:'GND',label:'GND',x:373,y:756,edge:'R'},
+           {id:'SDA',label:'SDA',x:373,y:786,edge:'R'},
+           {id:'SCL',label:'SCL',x:373,y:816,edge:'R'} ]},
+
+  { id:'ARD', x:722, y:510, w:430, h:342, fill:'#E2F2F0', stroke:'#2E8F86', center:true,
+    title:'Arduino', title2:'Uno R4 WiFi', sub:['USB(Serial) 와 D0/D1(Serial1) 독립'],
+    pins:[
+      {id:'VIN',  label:'VIN',   x:722, y:528, edge:'L'},
+      {id:'A0',   label:'A0',    x:722, y:600, edge:'L'},
+      {id:'A1',   label:'A1',    x:722, y:640, edge:'L'},
+      {id:'A2',   label:'A2',    x:722, y:680, edge:'L'},
+      {id:'A4',   label:'A4 SDA',x:722, y:752, edge:'L'},
+      {id:'A5',   label:'A5 SCL',x:722, y:790, edge:'L'},
+      {id:'D9',   label:'D9',    x:1152,y:560, edge:'R'},
+      {id:'D7',   label:'D7',    x:1152,y:600, edge:'R'},
+      {id:'D1',   label:'D1 TX', x:1152,y:672, edge:'R'},
+      {id:'D0',   label:'D0 RX', x:1152,y:700, edge:'R'},
+      {id:'5V',   label:'5V',    x:1152,y:792, edge:'R'},
+      {id:'GND',  label:'GND',   x:937, y:852, edge:'B'},
+    ]},
+
+  { id:'RLY', x:1528, y:288, w:322, h:188, fill:'#FBE7E4', stroke:'#D9776B', titleDX:46,
+    title:'8채널 릴레이 모듈', sub:['코일 DC5V / 접점 AC250V'],
+    pins:[
+      {id:'IN', label:'IN', x:1528,y:306,edge:'L'},
+      {id:'VCC',label:'VCC',x:1528,y:360,edge:'L'},
+      {id:'GND',label:'GND',x:1528,y:410,edge:'L'},
+      {id:'COM',label:'COM',x:1850,y:346,edge:'R'},
+      {id:'NO', label:'NO', x:1850,y:390,edge:'R'},
+      {id:'NC', label:'NC', x:1850,y:432,edge:'R'},
+    ]},
+
+  // ↓↓ 서보·HMI 위치 맞바꿈: 서보(D9/PWM)를 중간 슬롯, Nextion(UART)을 하단 슬롯으로 ↓↓
+  { id:'SRV', x:1528, y:520, w:292, h:150, fill:'#F2E9F8', stroke:'#9B6FC0', titleDX:30,
+    title:'서보모터 MG996R', sub:['신호(PWM)','전원: 어댑터3 5V / 2~3A'],
+    pins:[
+      {id:'SIG',label:'SIG',x:1528,y:548,edge:'L',out:true},
+      {id:'VP', label:'V+', x:1528,y:592,edge:'L'},
+      {id:'GND',label:'GND',x:1528,y:636,edge:'L'},
+    ]},
+
+  { id:'NXT', x:1525, y:740, w:312, h:170, fill:'#E6F0FA', stroke:'#5B8FC9', titleDX:46,
+    title:'Nextion HMI', sub:['NX8048P070-011C (7", UART)','전원: 어댑터2 5V / 2A'],
+    pins:[
+      {id:'RX', label:'RX', x:1525,y:768,edge:'L'},
+      {id:'TX', label:'TX', x:1525,y:806,edge:'L'},
+      {id:'5V', label:'5V', x:1525,y:846,edge:'L'},
+      {id:'GND',label:'GND',x:1525,y:882,edge:'L'},
+    ]},
+];
+
+/* ---------------- 모듈 + 핀 렌더 ---------------- */
+for (const m of modules) {
+  mk('rect', { x:m.x, y:m.y, width:m.w, height:m.h, rx:14,
+    fill:m.fill, stroke:m.stroke, 'stroke-width':2 }, modulesG);
+
+  // 제목 / 부제 (모듈 박스 위에 그려지는 라벨 레이어)
+  if (m.center) {
+    // 큰 박스(아두이노)는 가운데 정렬
+    const cx = m.x + m.w / 2;
+    let cy = m.y + m.h / 2 - 22;
+    txt(cx, cy, m.title, { size:22, weight:700, anchor:'middle', fill:'#1f2b36' });
+    if (m.title2) { cy += 28; txt(cx, cy, m.title2, { size:22, weight:700, anchor:'middle', fill:'#1f2b36' }); }
+    cy += 28;
+    (m.sub || []).forEach((line, i) => txt(cx, cy + i*20, line, { size:13.5, anchor:'middle', fill:'#7a8896' }));
+  } else {
+    const tx0 = m.x + (m.titleDX || 16);
+    let ty = m.y + 30;
+    txt(tx0, ty, m.title, { size:20, weight:700, fill:'#1f2b36' });
+    if (m.title2) { ty += 24; txt(tx0, ty, m.title2, { size:20, weight:700, fill:'#1f2b36' }); }
+    let sy = (m.title2 ? m.y + 78 : m.y + 52);
+    for (const line of (m.sub || [])) { txt(tx0, sy, line, { size:13.5, fill:'#7a8896' }); sy += 19; }
+  }
+
+  // 핀: 등록 + 점 + 핀 라벨
+  for (const p of m.pins) {
+    P[m.id + '.' + p.id] = [p.x, p.y];
+    mk('circle', { cx:p.x, cy:p.y, r:5, fill:'#fff', stroke:'#445', 'stroke-width':2 }, modulesG);
+    if (p.out) // 박스 밖(왼쪽)으로 라벨 — 제목과 겹침 방지
+      txt(p.x - 12, p.y + 5, p.label, { size:13.5, anchor:'end', fill:'#54616e' });
+    else if (p.edge === 'R') txt(p.x - 11, p.y + 5, p.label, { size:13.5, anchor:'end', fill:'#54616e' });
+    else if (p.edge === 'L') txt(p.x + 11, p.y + 5, p.label, { size:13.5, anchor:'start', fill:'#54616e' });
+    else if (p.edge === 'B') txt(p.x, p.y - 9, p.label, { size:13, anchor:'middle', fill:'#54616e' });
+    else txt(p.x, p.y + 16, p.label, { size:13, anchor:'middle', fill:'#54616e' });
+  }
+}
+const pin = ref => P[ref];
+
+/* ====================================================================
+ * 신호선 (전체 표시) — 모듈 뒤 레이어
+ * ==================================================================== */
+// 서미스터 신호 (주황) → A0/A1/A2
+poly([pin('NTC1.SIG'), [500,390],[500,600], pin('ARD.A0')], { color:C.orange });
+poly([pin('NTC2.SIG'), [470,512],[470,640], pin('ARD.A1')], { color:C.orange });
+poly([pin('NTC3.SIG'), [560,622],[560,680], pin('ARD.A2')], { color:C.orange });
+
+// AMG8833 I2C (초록)
+poly([pin('AMG.SDA'), [600,786],[600,752], pin('ARD.A4')], { color:C.green });
+poly([pin('AMG.SCL'), [660,816],[660,790], pin('ARD.A5')], { color:C.green });
+
+// Nextion UART (파랑) — 하단 슬롯으로 내려감
+poly([pin('ARD.D1'), [1320,672],[1320,768], pin('NXT.RX')], { color:C.blue });
+poly([pin('ARD.D0'), [1365,700],[1365,806], pin('NXT.TX')], { color:C.blue });
+
+// 서보 신호 (보라) D9 → MG996R — 중간 슬롯, 거의 수평 (교차 최소화)
+poly([pin('ARD.D9'), [1455,560],[1455,548], pin('SRV.SIG')], { color:C.purple });
+
+// 릴레이 트리거 (빨강) D7 → IN
+poly([pin('ARD.D7'), [1285,600],[1285,306], pin('RLY.IN')], { color:C.trig });
+
+/* ====================================================================
+ * V+ 어댑터 직결선 (유지) — 진한 적색 실선
+ * ==================================================================== */
+poly([pin('TAP.A1'), [742,495], pin('ARD.VIN')], { color:C.vplus, w:3 });                       // 어댑터1 → VIN
+poly([pin('TAP.A2'), [958,232],[1982,232],[1982,846], pin('NXT.5V')], { color:C.vplus, w:3 });   // 어댑터2 → Nextion 5V (하단·외측 루프)
+poly([pin('TAP.A3'), [1118,262],[1958,262],[1958,592], pin('SRV.VP')], { color:C.vplus, w:3 });  // 어댑터3 → 서보 V+ (중간·내측 루프)
+
+/* ====================================================================
+ * (2) GND 네트 — 시작점 스텁만, 긴 배선 생략
+ * ==================================================================== */
+const STUB = 30;
+function gndStub(ref, dir) {
+  const [x, y] = pin(ref);
+  const d = { L:[-1,0], R:[1,0], U:[0,-1], D:[0,1] }[dir];
+  poly([[x, y], [x + d[0]*STUB, y + d[1]*STUB]], { color:C.gnd, w:3 });
+  dot(x, y, C.gnd);
+}
+['NTC1.GND','NTC2.GND','NTC3.GND','AMG.GND'].forEach(r => gndStub(r, 'R'));
+['RLY.GND','NXT.GND','SRV.GND'].forEach(r => gndStub(r, 'L'));
+gndStub('ARD.GND', 'D');
+['TAP.G1','TAP.G2','TAP.G3'].forEach(r => gndStub(r, 'D'));
+
+/* ====================================================================
+ * (2) 5V 네트 (Arduino 5V 공급, 빨강 점선) — 시작점 스텁만
+ * ==================================================================== */
+function v5Stub(ref, dir) {
+  const [x, y] = pin(ref);
+  const d = { L:[-1,0], R:[1,0], U:[0,-1], D:[0,1] }[dir];
+  poly([[x, y], [x + d[0]*STUB, y + d[1]*STUB]], { color:C.v5, w:2.5, dash:'9 6' });
+  dot(x, y, C.v5);
+}
+v5Stub('ARD.5V', 'R');                                  // Arduino 5V 출력
+['NTC1.5V','NTC2.5V','NTC3.5V','AMG.VCC'].forEach(r => v5Stub(r, 'R')); // 분압/센서 공급
+v5Stub('RLY.VCC', 'L');                                 // 릴레이 코일 5V
+
+/* ====================================================================
+ * AC250V 접점 (미연결, 회색 점선 스텁) — 도식만
+ * ==================================================================== */
+['RLY.COM','RLY.NO','RLY.NC'].forEach(r => {
+  const [x, y] = pin(r);
+  poly([[x, y], [x + 60, y]], { color:C.ac, w:2.5, dash:'6 6' });
+});
+
+/* ====================================================================
+ * 하단 공통 GND 버스 바 (유지)
+ * ==================================================================== */
+mk('rect', { x:92, y:1150, width:1814, height:16, rx:6,
+  fill:'#fff', stroke:C.gnd, 'stroke-width':3 }, modulesG);
+mk('line', { x1:104, y1:1158, x2:1894, y2:1158, stroke:C.gnd, 'stroke-width':2 }, modulesG);
+
+txt(1000, 1110, '브레드보드 공통 GND 버스 — 어댑터1·2·3 GND + Arduino GND + 전 모듈 GND 단일 접지',
+  { size:18, weight:700, anchor:'middle', fill:'#1f2b36' });
+[['어댑터1 GND',760],['Arduino GND',1000],['어댑터2 GND',1235],['어댑터3 GND',1455]]
+  .forEach(([t,x]) => txt(x, 1140, t, { size:14, anchor:'middle', fill:'#54616e' }));
+
+/* ====================================================================
+ * 배선 라벨 (맨 앞 레이어)
+ * ==================================================================== */
+// 라벨은 각 배선의 수평/수직 구간 바로 옆(약 8~12px)에 밀착 배치한다.
+const L = (x, y, s, color, size=14.5, anchor='start') => txt(x, y, s, { size, weight:600, fill:color, anchor });
+// 서미스터 신호(주황) — NTC 신호핀에서 나오는 수평 구간 바로 위
+L(338, 382, 'A0 → 서미스터1 신호', C.orange);
+L(338, 504, 'A1 → 서미스터2 신호', C.orange);
+L(338, 614, 'A2 → 서미스터3 신호', C.orange);
+// AMG8833 I2C(초록) — AMG 핀에서 나오는 수평 구간 옆
+L(392, 778, 'A4(SDA) → AMG8833 SDA', C.green);
+L(392, 836, 'A5(SCL) → AMG8833 SCL', C.green);
+// Nextion UART(파랑) — D1/D0 수평 구간 바로 옆
+L(1172, 664, 'D1(TX) → Nextion RX', C.blue);
+L(1172, 724, 'D0(RX) → Nextion TX', C.blue);
+// 서보 신호(보라) — D9 수평 구간 바로 위
+L(1185, 552, 'D9 → 서보 신호(PWM)', C.purple);
+// 릴레이 트리거(빨강) — IN 진입 수평 구간 위
+L(1300, 298, 'D7 → 릴레이 IN  ※능동 LOW', C.trig);
+// V+ 어댑터(진적색) — 각 직결선 구간 옆
+L(752, 384, '어댑터1 9~12V → Arduino VIN', C.vplus);
+L(1040, 224, '어댑터2 5V/2A → Nextion 5V', C.vplus);
+L(1240, 254, '어댑터3 5V/2~3A → 서보 V+', C.vplus);
+// 5V 공급(빨강 점선·생략선) — 관련 스텁 부근
+L(760, 1000, 'Arduino 5V → 서미스터1·2·3 (분압) · AMG8833', C.v5);
+L(1312, 366, 'Arduino 5V → 릴레이 코일', C.v5);
+// AC250V 접점 — 우측 점선 스텁 옆 (오른쪽 정렬로 화면 밖 넘침 방지)
+L(1908, 470, 'AC250V ※도식 표시만·미연결', C.ac, 13.5, 'end');
+
+/* 제목 */
+txt(40, 60, '온도감지 모니터링 장치 — 배선도 (Wiring Diagram)', { size:34, weight:800, fill:'#1f2b36' });
+txt(40, 92, 'Arduino Uno R4 WiFi · AMG8833 · NTC×3 · Nextion HMI · MG996R · 1ch Relay | 공통 GND = 브레드보드 버스 / V+는 어댑터에서 직결(미합류)',
+  { size:16, fill:'#7a8896' });
+
+/* ====================================================================
+ * 범례 박스
+ * ==================================================================== */
+mk('rect', { x:70, y:1230, width:880, height:200, rx:12, fill:'#fbfdff', stroke:'#d4dde6', 'stroke-width':1.5 }, modulesG);
+txt(92, 1262, '색상 범례 (Legend)', { size:18, weight:700, fill:'#1f2b36' });
+const legend = [
+  ['서미스터 신호 (A0~A2)', C.orange, false, 92, 1296],
+  ['AMG8833 I2C (SDA/SCL)', C.green, false, 92, 1330],
+  ['Nextion UART (D0/D1)', C.blue, false, 92, 1364],
+  ['서보 신호 (D9 PWM)', C.purple, false, 92, 1398],
+  ['Arduino 5V 공급 (점선=내부 5V)', C.v5, true, 510, 1296],
+  ['V+ 어댑터 전원 (모듈로 직결)', C.vplus, false, 510, 1330],
+  ['GND (공통 버스로 집결 · 스텁 표기)', C.gnd, false, 510, 1364],
+  ['AC250V 접점 (도식만·미연결)', C.ac, true, 510, 1398],
+];
+for (const [t, c, dash, x, y] of legend) {
+  // 범례 박스(modulesG) 위에 보이도록 스와치/텍스트는 앞 레이어(labelsG)에 그린다.
+  poly([[x, y-5],[x+52, y-5]], { color:c, w:dash?2.5:3.5, dash:dash?'8 5':'none' }, labelsG);
+  txt(x + 66, y, t, { size:14.5, fill:'#3a4651' });
+}
+
+/* ====================================================================
+ * 주석 박스
+ * ==================================================================== */
+mk('rect', { x:985, y:1212, width:965, height:222, rx:12, fill:'#fffdf6', stroke:'#e6d9a8', 'stroke-width':1.5 }, modulesG);
+txt(1008, 1244, '※ 가정값 / 안전 주석 (미확정 항목)', { size:18, weight:700, fill:'#8a6d1f' });
+const notes = [
+  '① 서미스터 분압저항 : NTC 10kΩ 기준 10kΩ 직렬 분압 가정.',
+  '② 서미스터 기준전압 : 5V 가정 (정밀도 위해 3.3V 사용 시 수정).',
+  '③ 릴레이 트리거 로직 : 능동 LOW 가정 (능동 HIGH면 신호 반전).',
+  '· 공통 GND : 어댑터1/2/3 + Arduino GND 모두 브레드보드 버스 1곳 결선.',
+  '· V+ 라인 : 각 어댑터 → 해당 모듈 직결 (브레드보드에서 합선 금지).',
+  '· GND·5V 배선 : 가시성 위해 시작점 스텁만 표기, 실제 결선은 라벨 기준.',
+];
+notes.forEach((n, i) => txt(1008, 1278 + i*26, n, { size:14.5, fill:'#5a4f33' }));
+
+/* ====================================================================
+ * 내보내기
+ * ==================================================================== */
+function serializeSVG() {
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', NS);
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
+}
+function download(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+document.getElementById('btn-svg').onclick = () =>
+  download('temperature-monitor-wiring.svg', new Blob([serializeSVG()], { type:'image/svg+xml' }));
+document.getElementById('btn-png').onclick = () => {
+  const img = new Image();
+  const blob = new Blob([serializeSVG()], { type:'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    const cv = document.createElement('canvas'); cv.width = 2000*1.5; cv.height = 1470*1.5;
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+    cv.toBlob(b => download('temperature-monitor-wiring.png', b));
+  };
+  img.src = url;
+};
+</script>
+</body>
+</html>
